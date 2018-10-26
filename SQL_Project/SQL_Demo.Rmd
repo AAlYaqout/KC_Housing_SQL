@@ -1,0 +1,355 @@
+---
+title: "Basic, Intermediate, and Advanced SQL in R"
+author: "Abdulaziz AlYaqout"
+date: "10/19/2018"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+## Introduction to SQL
+
+Structured Query Language (or SQL) is a language that is used to communicate with databases. It is the primary language used for relational database systems. 
+
+###SQL in R
+This document walks through basic, intermediate, and advanced uses of SQL. 
+
+For ease of use, I demonstrate all the SQL code in R. R contains packages that allow you to write queries in SQL. In some cases (like a work setting) you can connect directly to a database in R (e.g. through an ODBC connection). But for the sake of simplicity, in this document, rather than connecting directly to a database, we will simply import data into R data frames and show how to run SQL queries over it. 
+
+The R dataframes will act as our database tables. 
+
+We will use the sqldf package in R to do this.
+
+```{r}
+library(sqldf)
+```
+
+
+##Data
+
+We will use data related to the real estate market in Kansas City, MO. 
+```{r}
+library(readxl)
+kc_housing <- read_excel("KC_House_Data.xlsx")
+```
+
+####Explore structure of the data
+```{r}
+str(kc_housing)
+```
+Looks like most of our variables are of numeric type.
+
+We can also aggregate by some factors (e.g. bedoroom size, waterfront, etc.)
+
+##Basic SQL
+
+####Simple Selects
+To see all available fields in a table, run a 'SELECT *' command.
+In the FROM clause, specify the dataframe name as the 'table' name. 
+And we will limit our results to 10 records to save space.
+
+```{r}
+sqldf("SELECT * 
+      FROM kc_housing 
+      LIMIT 10")
+```
+
+If you want to select just a few fields, specify those in the SELECT clause instead of the *. 
+```{r}
+sqldf("SELECT id, price, bedrooms 
+      FROM kc_housing 
+      LIMIT 10")
+```
+
+####Select count
+Another common SQL command is 'select count()' which returns a count of records. 
+
+The following query returns a count of all records in the table. 
+```{r}
+sqldf("SELECT COUNT(*) 
+      FROM kc_housing")
+```
+
+
+####Select distinct
+Sometimes you may just want the unique values in a field. The following query
+will show how many unique floor counts there are in the KC houses. 
+```{r}
+sqldf("SELECT DISTINCT floors 
+      FROM kc_housing")
+```
+
+Integrating our knowledge of count() function, we can find the number of distinct
+floors in the KC housing data. 
+
+```{r}
+sqldf("SELECT COUNT(DISTINCT floors) 
+      FROM kc_housing")
+```
+
+Note: this is useful, but the field name is a little unclean. Let's clean it up.
+You can rename a field directly using SQL code using 'as' for a cleaner output. We'll name it
+'NumberOfDistinctFloors'
+
+```{r}
+sqldf("SELECT COUNT(DISTINCT floors) as NumberOfDistinctFloors
+      FROM kc_housing")
+```
+#### WHERE Clause
+In the WHERE clause, we filter the data. The SELECT tells us what fields to
+return. The WHERE clause puts a filter on the data. 
+
+Lets return the count (number) of all houses with more than 2 bathrooms
+```{r}
+sqldf("SELECT COUNT(*) as HighBathroomHouses
+      FROM kc_housing
+      WHERE bathrooms > 2")
+```
+And compare it to the 1-bathroom houses
+```{r}
+sqldf("SELECT COUNT(*) as OneBathroomHouses
+      FROM kc_housing
+      WHERE bathrooms =  1")
+```
+
+As you can see, the WHERE clause takes logical operators (<, >, =, and !=)
+
+You can link multiple conditions together using AND and OR as well. 
+
+Let's return 15 records of  2 bedroom houses whos living rooms are greater than 
+2000 square feet. 
+```{r}
+sqldf("SELECT id, bathrooms, sqft_living
+      FROM kc_housing
+      WHERE bathrooms = 2 AND sqft_living > 2000
+      LIMIT 15")
+```
+Now let's return 15 records of 2 or 3 bedroom houses whos living rooms are greater than 
+2000 square feet and whose condition is at least a rating of 5. 
+```{r}
+sqldf("SELECT id, bathrooms, sqft_living, condition
+      FROM kc_housing
+      WHERE (bathrooms = 2 OR bathrooms = 3) AND sqft_living > 2000 AND condition >= 5
+      LIMIT 15")
+```
+
+##Intermediate SQL
+The two intermediate functions in SQL are to group by and to join tables. 
+
+####Group by
+Group by allows you to run the query aggregating the results on some factor.
+
+Here we'll return the count of records in the table, grouping by condition
+
+```{r}
+sqldf("SELECT condition, COUNT(*) as Volume
+      FROM kc_housing
+      GROUP BY condition")
+```
+
+Suppose we want to order the results by Volume. We can order our results
+by typing 'ORDER BY' and the variable to order by. 
+
+```{r}
+sqldf("SELECT condition, COUNT(*) as Volume
+      FROM kc_housing
+      GROUP BY condition
+      ORDER BY Volume")
+
+```
+
+Group by is also useful when performing functions on data and comparing groups. 
+
+To perform functions in SQL, you type the function name and call it on the field 
+of interest. For example, to find the minimum yr built, type min(yr_built). 
+
+```{r}
+sqldf("SELECT MIN(yr_built)
+      FROM kc_housing")
+
+```
+Now let's find the most recent year a house was built, grouping by condition
+```{r}
+sqldf("SELECT condition, MAX(yr_built) as MostRecentYear
+      FROM kc_housing
+      GROUP BY condition
+      ORDER BY condition")
+
+```
+
+The worst quality houses (1 and 2) not surprisingly are older than the 
+better quality houses. 
+
+####Inner Joins
+A key aspect of SQL is joining tables together. This is central to the relational
+structure of databases. 
+
+To illustrate, let's make some data that we can join to the housing data. 
+We'll assume that each house owner owns a car. We'll take the cars from the
+classic mtcars dataset and randomly assign them to each id in the KC housing data. 
+
+```{r}
+kc_cars <- data.frame(id = kc_housing$id,
+                      cartype = sample(rownames(mtcars), nrow(kc_housing), 
+                                       replace=TRUE))
+
+head(kc_cars)
+```
+For each ID in KC Housing, there is an associated car. 
+
+Suppose we want to find the cars in houses whose lots exceed 5000 square feet. 
+
+We can join the KC Housing data with the KC Cars data via a common key
+called a primary key. This binds the two tables together. In our case it is id.
+
+Note: an inner join will only return records with ids that are common to both tables.
+
+```{r}
+sqldf("SELECT kc_housing.id, price, bedrooms, cartype
+      FROM kc_housing
+      INNER JOIN kc_cars
+      ON kc_housing.id = kc_cars.id
+      WHERE kc_housing.sqft_lot > 5000
+      LIMIT 15")
+```
+Now you can join the two tables. The associated car type will be joined to the 
+KC Housing on the records with a matching ID. This is essentiall the idea of joins.
+
+####Left Joins and Right Joins
+Suppose your cars data only contains a subset of the IDs in the housing data. 
+But you still want to retain all the records in the housing data in your query.
+
+A left join will allow you to do that. 
+
+It retains all records of the left table, while performing a join with columns
+on the right table where appropriate. 
+
+Subset the kc_cars to just half the data and do a left join with kc_housing
+```{r}
+set.seed(42)
+kc_cars_subset <- kc_cars[sample(1:nrow(kc_housing), nrow(kc_housing)*.5),]
+```
+
+
+```{r}
+sqldf("SELECT kc_housing.id, price, bedrooms, cartype
+      FROM kc_housing
+      LEFT JOIN kc_cars_subset
+      ON kc_housing.id = kc_cars_subset.id
+      LIMIT 10")
+```
+
+As you can see many of the rows contain NA. Left joins retain all records
+from the left table, and only matching records of the right table. Left join 
+fills in NA or NULL where there is no matching key in the right table. 
+
+Right join does the opposite to this (reversing left and right tables).
+
+There is one more join called outer join. This returns all records in both tables.
+It fills in NA on the left table where there is no match to the right table key. 
+And NA on the right table where there is no match to the left table key. Sometimes
+this is called a full outer join. 
+
+##Advanced SQL
+
+There are many advanced SQL techniques. Advanced SQL includes building nested queries, 
+doing multiple joins, and building case statements to create variables in your table
+using if/else logic. 
+
+####Nested queries
+The simple idea behind a nested query is to return records using SQL
+statement, and then query from those results as if the results were its own table.
+
+Here is a simple example. Suppose we want to find the maximum average 
+square footage of a lot size grouping by condition. 
+
+We could just do the following query which groups the data by condition
+and finds the max square footage for each of these groups. 
+We can then order by the MaxSqFootage in descending order. 
+
+```{r}
+sqldf("SELECT condition, MAX(sqft_lot) as MaxSqFootage
+      FROM kc_housing
+      GROUP BY condition
+      ORDER BY MaxSqFootage DESC")
+```
+
+While this may work to give us our answer, technically we don't have the max. 
+We have a table with 5 rows. If we want a single maximum, we can use
+nested queries for this. 
+
+Now that we have aggregated by groups, we can return the maximum of these
+aggregates by nesting the previous query in another select max() statement.
+
+```{r}
+sqldf("SELECT grouped.condition, max(grouped.MaxSqFootage) as HighestMax
+       FROM 
+           (SELECT condition, MAX(sqft_lot) as MaxSqFootage
+           FROM kc_housing
+           GROUP BY condition
+           ORDER BY MaxSqFootage DESC) as grouped")
+```
+Here you can see we actually encased our previous SQL statement in parentheses. 
+Afterwards it is common practice to give our table results a name. We named it
+'grouped.' Now in the outer layer of this nested query we can refer to these
+records as a table named 'grouped'. So in the outer layer of the query we 
+select the condition and find the max of our MaxSqFootage field. 
+
+In practice, nested queries can allow you to do quite flexible analyses. 
+
+#### Multiple joins
+Here let's join some metadata about the cars from mtcars to the kc_cars_subset
+table. Then we can left join the resulting table to the kc_housing table. 
+
+```{r}
+mtcars$cartype <- row.names(mtcars)
+sqldf("SELECT kc_housing.id, kc_housing.price, kc_housing.bathrooms, temp.cartype, temp.mpg
+       FROM kc_housing
+       LEFT JOIN
+           (SELECT kc_cars_subset.id, mtcars.cartype, mtcars.mpg
+            FROM kc_cars_subset 
+            INNER JOIN mtcars
+            ON kc_cars_subset.cartype = mtcars.cartype) as temp
+       ON kc_housing.id = temp.id
+       LIMIT 30")
+```
+
+
+####Case Statements
+
+We will wrap up with CASE statements, which allow you to create new variables
+using if/else logic inside of SQL.
+
+Suppose we wanted to create a new binary variable called 'BigLot' based on
+whether the lot size square footage exceeds 10,000 feet. 
+
+We can use the following statement to create the variable. 
+
+```{r}
+sqldf("SELECT id, price, sqft_lot,
+       CASE WHEN sqft_lot >= 10000 THEN 1
+            ELSE 0 END AS BigLot
+       FROM kc_housing
+       LIMIT 15")
+```
+
+Finally, we can use case statements to make new variables that we can use
+in nested SQL statements, group by statements, etc. 
+
+Suppose we wanted to take the previous query and now perform aggregation
+based on the BigLot status. 
+
+```{r}
+sqldf("SELECT avg(price) as AvgPrice,
+       CASE WHEN sqft_lot >= 10000 THEN 1
+            ELSE 0 END AS BigLot
+       FROM kc_housing
+      GROUP BY BigLot")
+```
+
+As you can see case statements can provide you with some flexibile analysis. 
+
+## Summary
+
+In this guide, we demonstrated beginner, intermediate, and more advanced
+uses of Structured Query Language (SQL). 
